@@ -149,13 +149,15 @@ async function transcribeWithWhisper(filePath, options = {}) {
   const device = String(options.device || config.whisperDevice || 'cpu').toLowerCase();
   const whisperOptions = {
     modelName,
-    modelPath: WHISPER_MODELS_DIR,
     autoDownloadModelName: hasModelFile ? undefined : modelName,
     withCuda: device === 'gpu',
     whisperOptions: {
       language: options.language,
     },
   };
+  if (hasModelFile) {
+    whisperOptions.modelPath = WHISPER_MODELS_DIR;
+  }
 
   const result = await whisperFn(filePath, whisperOptions);
   return extractWhisperText(result);
