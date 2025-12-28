@@ -128,15 +128,22 @@ async function getGradioClient() {
 
 async function buildGradioFiles(filePath) {
   const gradio = await loadGradioModule();
-  const handleFile = gradio.handle_file || gradio.handleFile;
+  const handleFile =
+    gradio.handle_file ||
+    gradio.handleFile ||
+    (gradio.default && (gradio.default.handle_file || gradio.default.handleFile));
+  const resolvedPath = path.resolve(filePath);
   if (typeof handleFile === 'function') {
-    return [await handleFile(filePath)];
+    return [await handleFile(resolvedPath)];
   }
   if (typeof File !== 'undefined') {
-    const data = await fs.promises.readFile(filePath);
-    return [new File([data], path.basename(filePath))];
+    const data = await fs.promises.readFile(resolvedPath);
+    const baseName = path.basename(resolvedPath);
+    const ext = path.extname(baseName).toLowerCase();
+    const name = ext ? baseName : `${baseName}.wav`;
+    return [new File([data], name, { type: 'audio/wav' })];
   }
-  return [filePath];
+  throw new Error('Cannot build Gradio file payload. handle_file and File are unavailable.');
 }
 
 function normalizeGradioDevice(device) {
