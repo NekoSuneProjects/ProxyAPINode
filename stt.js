@@ -102,6 +102,22 @@ function extractWhisperText(result) {
   return '';
 }
 
+function stripSrt(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const output = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^\d+$/.test(trimmed)) continue;
+    if (/^\d{2}:\d{2}:\d{2},\d{3}\s-->\s\d{2}:\d{2}:\d{2},\d{3}$/.test(trimmed)) {
+      continue;
+    }
+    if (trimmed.startsWith('Done in ') || trimmed === '------------------------------------') continue;
+    output.push(trimmed);
+  }
+  return output.join(' ').trim();
+}
+
 function normalizeBaseUrl(url) {
   return String(url).replace(/\/+$/, '');
 }
@@ -249,7 +265,8 @@ async function transcribeWithWhisper(filePath, options = {}) {
   ];
 
   const result = await callGradio(apiUrl, apiName, data);
-  return extractWhisperText(result);
+  const rawText = extractWhisperText(result);
+  return stripSrt(rawText);
 }
 
 module.exports = {
