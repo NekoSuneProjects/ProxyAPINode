@@ -140,18 +140,19 @@ async function buildGradioFiles(filePath) {
       const ext = path.extname(baseName).toLowerCase();
       const name = ext ? baseName : `${baseName}.wav`;
       filePayload.name = filePayload.name || name;
+      filePayload.orig_name = filePayload.orig_name || name;
       filePayload.filename = filePayload.filename || name;
       filePayload.mime_type = filePayload.mime_type || 'audio/wav';
       filePayload.mimeType = filePayload.mimeType || 'audio/wav';
     }
-    return [filePayload];
+    return filePayload;
   }
   if (typeof File !== 'undefined') {
     const data = await fs.promises.readFile(resolvedPath);
     const baseName = path.basename(resolvedPath);
     const ext = path.extname(baseName).toLowerCase();
     const name = ext ? baseName : `${baseName}.wav`;
-    return [new File([data], name, { type: 'audio/wav' })];
+    return new File([data], name, { type: 'audio/wav' });
   }
   throw new Error('Cannot build Gradio file payload. handle_file and File are unavailable.');
 }
