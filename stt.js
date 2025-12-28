@@ -79,7 +79,11 @@ function normalizeWhisperModel(modelName) {
 function extractWhisperText(result) {
   if (!result) return '';
   if (Array.isArray(result)) {
-    return String(result[0] ?? '').trim();
+    const first = result[0];
+    if (first && typeof first === 'object' && typeof first.text === 'string') {
+      return first.text.trim();
+    }
+    return String(first ?? '').trim();
   }
   if (result.data && Array.isArray(result.data)) {
     return String(result.data[0] ?? '').trim();
@@ -103,7 +107,9 @@ function extractWhisperText(result) {
 }
 
 function stripSrt(text) {
-  const lines = String(text || '').split(/\r?\n/);
+  let cleaned = String(text || '').trim();
+  cleaned = cleaned.replace(/^\d{10,}-\d{6,}\s*/, '');
+  const lines = cleaned.split(/\r?\n/);
   const output = [];
   for (const line of lines) {
     const trimmed = line.trim();
@@ -212,7 +218,7 @@ async function transcribeWithWhisper(filePath, options = {}) {
     '',
     false,
     true,
-    options.fileFormat || 'SRT',
+    options.fileFormat || 'txt',
     false,
     modelName,
     options.language || 'Automatic Detection',
