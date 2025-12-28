@@ -2,14 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const vosk = require("vosk");
 const { Readable } = require('stream');
-const gradio = require('@gradio/client');
-const GradioClient = gradio.Client || gradio.client || gradio.default;
-const handleFile = gradio.handle_file || gradio.handleFile;
 const { config } = require("./config");
 
 const MODEL_PATH = `./model/${config.vaskmodel}`
 
 let model = null;
+let gradioModulePromise = null;
 
 async function voskLoader() {
   // Only load model if not already loaded
@@ -103,12 +101,21 @@ function extractWhisperText(result) {
 
 let gradioClientPromise = null;
 
+async function loadGradioModule() {
+  if (!gradioModulePromise) {
+    gradioModulePromise = import('@gradio/client');
+  }
+  return gradioModulePromise;
+}
+
 async function getGradioClient() {
   if (gradioClientPromise) return gradioClientPromise;
   const apiUrl = config.whisperApiUrl;
   if (!apiUrl) {
     throw new Error('Missing whisperApiUrl in config.');
   }
+  const gradio = await loadGradioModule();
+  const GradioClient = gradio.Client || gradio.client || gradio.default;
   if (GradioClient && typeof GradioClient.connect === 'function') {
     gradioClientPromise = GradioClient.connect(apiUrl);
   } else if (typeof GradioClient === 'function') {
@@ -120,6 +127,8 @@ async function getGradioClient() {
 }
 
 async function buildGradioFiles(filePath) {
+  const gradio = await loadGradioModule();
+  const handleFile = gradio.handle_file || gradio.handleFile;
   if (typeof handleFile === 'function') {
     return [await handleFile(filePath)];
   }
