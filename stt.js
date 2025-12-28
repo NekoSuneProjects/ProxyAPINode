@@ -9,10 +9,11 @@ const MODEL_PATH = `./model/${config.vaskmodel}`
 const WHISPER_DIR = 'whisper';
 const WHISPER_MODELS_DIR = path.join(WHISPER_DIR, 'models');
 const WHISPER_MODEL_FILES = {
+  tiny: 'ggml-tiny.bin',
   base: 'ggml-base.bin',
   small: 'ggml-small.bin',
   medium: 'ggml-medium.bin',
-  large: 'ggml-large.bin',
+  large: 'ggml-large-v1.bin',
   largev2: 'ggml-large-v2.bin',
 };
 
