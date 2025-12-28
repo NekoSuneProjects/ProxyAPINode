@@ -142,6 +142,7 @@ async function transcribeWithWhisper(filePath, options = {}) {
     throw new Error(`Unsupported whisper module API. Exports: ${exportKeys}`);
   }
 
+  const resolvedFilePath = path.resolve(filePath);
   const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
   const modelFilePath = getWhisperModelPath(modelName);
   const hasModelFile = modelFilePath && fs.existsSync(modelFilePath);
@@ -170,7 +171,7 @@ async function transcribeWithWhisper(filePath, options = {}) {
     },
   };
 
-  const result = await whisperFn(filePath, whisperOptions);
+  const result = await whisperFn(resolvedFilePath, whisperOptions);
   return extractWhisperText(result);
 }
 
