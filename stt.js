@@ -2,26 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const vosk = require("vosk");
 const { Readable } = require('stream');
+const gradio = require('@gradio/client');
+const GradioClient = gradio.Client || gradio.client || gradio.default;
+const handleFile = gradio.handle_file || gradio.handleFile;
 const { config } = require("./config");
 
 const MODEL_PATH = `./model/${config.vaskmodel}`
-
-const WHISPER_DIR = 'whisper';
-const WHISPER_MODELS_DIR = path.join(WHISPER_DIR, 'models');
-const WHISPER_MODEL_FILES = {
-  tiny: 'ggml-tiny.bin',
-  'tiny.en': 'ggml-tiny.en.bin',
-  base: 'ggml-base.bin',
-  'base.en': 'ggml-base.en.bin',
-  small: 'ggml-small.bin',
-  'small.en': 'ggml-small.en.bin',
-  medium: 'ggml-medium.bin',
-  'medium.en': 'ggml-medium.en.bin',
-  large: 'ggml-large.bin',
-  'large-v1': 'ggml-large-v1.bin',
-  'large-v2': 'ggml-large-v2.bin',
-  'large-v3-turbo': 'ggml-large-v3-turbo.bin',
-};
 
 let model = null;
 
@@ -92,33 +78,14 @@ function normalizeWhisperModel(modelName) {
   return normalized;
 }
 
-function getWhisperModelPath(modelName) {
-  const normalized = normalizeWhisperModel(modelName);
-  const fileName = WHISPER_MODEL_FILES[normalized];
-  if (!fileName) return null;
-  return path.join(WHISPER_MODELS_DIR, fileName);
-}
-
-function loadWhisperModule() {
-  try {
-    return require('nodejs-whisper');
-  } catch (err) {
-    throw new Error('Whisper module not installed. Add nodejs-whisper to dependencies.');
-  }
-}
-
-function resolveWhisperFunction(whisperModule) {
-  if (!whisperModule) return null;
-  if (typeof whisperModule === 'function') return whisperModule;
-  if (typeof whisperModule.nodewhisper === 'function') return whisperModule.nodewhisper;
-  if (typeof whisperModule.whisper === 'function') return whisperModule.whisper;
-  if (typeof whisperModule.transcribe === 'function') return whisperModule.transcribe;
-  if (typeof whisperModule.default === 'function') return whisperModule.default;
-  return null;
-}
-
 function extractWhisperText(result) {
   if (!result) return '';
+  if (Array.isArray(result)) {
+    return String(result[0] ?? '').trim();
+  }
+  if (result.data && Array.isArray(result.data)) {
+    return String(result.data[0] ?? '').trim();
+  }
   if (typeof result === 'string') {
     if (fs.existsSync(result)) {
       return fs.readFileSync(result, 'utf8').trim();
@@ -134,44 +101,106 @@ function extractWhisperText(result) {
   return '';
 }
 
-async function transcribeWithWhisper(filePath, options = {}) {
-  const whisperModule = loadWhisperModule();
-  const whisperFn = resolveWhisperFunction(whisperModule);
-  if (typeof whisperFn !== 'function') {
-    const exportKeys = Object.keys(whisperModule || {}).join(', ') || 'none';
-    throw new Error(`Unsupported whisper module API. Exports: ${exportKeys}`);
+let gradioClientPromise = null;
+
+async function getGradioClient() {
+  if (gradioClientPromise) return gradioClientPromise;
+  const apiUrl = config.whisperApiUrl;
+  if (!apiUrl) {
+    throw new Error('Missing whisperApiUrl in config.');
   }
+  if (GradioClient && typeof GradioClient.connect === 'function') {
+    gradioClientPromise = GradioClient.connect(apiUrl);
+  } else if (typeof GradioClient === 'function') {
+    gradioClientPromise = GradioClient(apiUrl);
+  } else {
+    throw new Error('Unsupported @gradio/client API.');
+  }
+  return gradioClientPromise;
+}
 
-  const resolvedFilePath = path.resolve(filePath);
+async function buildGradioFiles(filePath) {
+  if (typeof handleFile === 'function') {
+    return [await handleFile(filePath)];
+  }
+  if (typeof File !== 'undefined') {
+    const data = await fs.promises.readFile(filePath);
+    return [new File([data], path.basename(filePath))];
+  }
+  return [filePath];
+}
+
+function normalizeGradioDevice(device) {
+  const raw = String(device || '').toLowerCase();
+  if (raw === 'gpu' || raw === 'cuda') return 'cuda';
+  return 'cpu';
+}
+
+async function transcribeWithWhisper(filePath, options = {}) {
+  const client = await getGradioClient();
   const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
-  const modelFilePath = getWhisperModelPath(modelName);
-  const hasModelFile = modelFilePath && fs.existsSync(modelFilePath);
+  const device = normalizeGradioDevice(options.device || config.whisperDevice || 'cpu');
+  const apiName = options.apiName || config.whisperApiName || '/transcribe_file';
+  const files = await buildGradioFiles(path.resolve(filePath));
 
-  const device = String(options.device || config.whisperDevice || 'cpu').toLowerCase();
-  const whisperOptions = {
-    modelName,
-    autoDownloadModelName: hasModelFile ? undefined : modelName,
-    removeWavFileAfterTranscription: false,
-    withCuda: device === 'gpu',
-    logger: console,
-    whisperOptions: {
-      outputInCsv: false,
-      outputInJson: false,
-      outputInJsonFull: false,
-      outputInLrc: false,
-      outputInSrt: true,
-      outputInText: false,
-      outputInVtt: false,
-      outputInWords: false,
-      translateToEnglish: false,
-      wordTimestamps: false,
-      timestamps_length: 20,
-      splitOnWord: true,
-      language: options.language,
-    },
+  const payload = {
+    files,
+    input_folder_path: '',
+    include_subdirectory: false,
+    save_same_dir: true,
+    file_format: options.fileFormat || 'SRT',
+    add_timestamp: false,
+    progress: modelName,
+    param_7: options.language || 'Automatic Detection',
+    param_8: false,
+    param_9: 5,
+    param_10: -1,
+    param_11: 0.6,
+    param_12: options.computeType || 'float16',
+    param_13: 5,
+    param_14: 1,
+    param_15: true,
+    param_16: 0.5,
+    param_17: options.initialPrompt || '',
+    param_18: 0,
+    param_19: 2.4,
+    param_20: 1,
+    param_21: 1,
+    param_22: 0,
+    param_23: options.prefix || '',
+    param_24: true,
+    param_25: '[-1]',
+    param_26: 1,
+    param_27: false,
+    param_28: `"'“¿([{-`,
+    param_29: `"'.。,，!！?？:：”)]}、`,
+    param_30: options.maxNewTokens ?? 3,
+    param_31: 30,
+    param_32: options.hallucinationSilenceThreshold ?? 3,
+    param_33: options.hotwords || '',
+    param_34: 0.5,
+    param_35: 1,
+    param_36: 24,
+    param_37: true,
+    param_38: false,
+    param_39: 0.5,
+    param_40: 250,
+    param_41: 9999,
+    param_42: 1000,
+    param_43: 2000,
+    param_44: false,
+    param_45: device,
+    param_46: '',
+    param_47: true,
+    param_48: false,
+    param_49: 'UVR-MDX-NET-Inst_HQ_4',
+    param_50: device,
+    param_51: 256,
+    param_52: false,
+    param_53: true,
   };
 
-  const result = await whisperFn(resolvedFilePath, whisperOptions);
+  const result = await client.predict(apiName, payload);
   return extractWhisperText(result);
 }
 
@@ -179,8 +208,5 @@ module.exports = {
   transcribeWithVosk,
   transcribeWithWhisper,
   voskLoader,
-  WHISPER_MODELS_DIR,
-  WHISPER_MODEL_FILES,
   normalizeWhisperModel,
-  getWhisperModelPath,
 };
