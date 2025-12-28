@@ -19,6 +19,7 @@ const logger = console;
 const {
     transcribeWithVosk,
     transcribeWithWhisper,
+    transcribeWithWhisperWithFallback,
     voskLoader,
     normalizeWhisperModel,
 } = require('./stt');
@@ -352,7 +353,7 @@ app.post('/stt', upload.single('audio'), async (req, res) => {
         let responseModel = null;
         if (engine === 'whisper') {
             const modelName = normalizeWhisperModel(modelRaw);
-            text = await transcribeWithWhisper(filePath, { model: modelName, device });
+            text = await transcribeWithWhisperWithFallback(filePath, { model: modelName, device });
             responseModel = modelName;
         } else if (engine === 'vosk') {
             text = await transcribeWithVosk(filePath);
@@ -360,7 +361,7 @@ app.post('/stt', upload.single('audio'), async (req, res) => {
         } else if (engine === 'both') {
             const modelName = normalizeWhisperModel(modelRaw);
             const [whisperText, voskText] = await Promise.all([
-                transcribeWithWhisper(filePath, { model: modelName, device }),
+                transcribeWithWhisperWithFallback(filePath, { model: modelName, device }),
                 transcribeWithVosk(filePath),
             ]);
             await fsnormal.remove(filePath);

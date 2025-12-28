@@ -216,6 +216,31 @@ function normalizeGradioDevice(device) {
   return 'cpu';
 }
 
+async function transcribeWithWhisperPrimary(filePath, options = {}) {
+  const url = options.primaryUrl || config.whisperPrimaryUrl || 'http://localhost:8080/v1/audio/transcriptions';
+  const modelName = options.primaryModel || options.model || config.whisperPrimaryModel || config.whisperModel || 'base';
+  const resolvedPath = path.resolve(filePath);
+
+  const form = new FormData();
+  form.append('file', fs.createReadStream(resolvedPath));
+  form.append('model', modelName);
+
+  const response = await fetch(url, { method: 'POST', body: form });
+
+  if (!response.ok) {
+    throw new Error(`Primary whisper failed: ${response.status} ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  const text = result?.text ?? result?.transcript ?? result?.transcription;
+
+  if (!text) {
+    throw new Error('Primary whisper returned no text.');
+  }
+
+  return String(text).trim();
+}
+
 async function transcribeWithWhisper(filePath, options = {}) {
   const apiUrl = config.whisperApiUrl;
   if (!apiUrl) {
@@ -287,9 +312,22 @@ async function transcribeWithWhisper(filePath, options = {}) {
   return await extractWhisperTextFromResult(result);
 }
 
+async function transcribeWithWhisperWithFallback(filePath, options = {}) {
+  try {
+    return await transcribeWithWhisperPrimary(filePath, options);
+  } catch (err) {
+    try {
+      return await transcribeWithWhisper(filePath, options);
+    } catch (innerErr) {
+      return await transcribeWithVosk(filePath);
+    }
+  }
+}
+
 module.exports = {
   transcribeWithVosk,
   transcribeWithWhisper,
+  transcribeWithWhisperWithFallback,
   voskLoader,
   normalizeWhisperModel,
 };
