@@ -93,6 +93,12 @@ function getWhisperModelPath(modelName) {
   return path.join(WHISPER_MODELS_DIR, fileName);
 }
 
+function getWhisperCppModelName(modelName) {
+  const normalized = normalizeWhisperModel(modelName);
+  if (normalized === 'largev2') return 'large-v2';
+  return normalized;
+}
+
 function loadWhisperModule() {
   try {
     return require('nodejs-whisper');
@@ -137,15 +143,15 @@ async function transcribeWithWhisper(filePath, options = {}) {
   }
 
   const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
-  const modelPath = getWhisperModelPath(modelName);
-  if (!modelPath || !fs.existsSync(modelPath)) {
-    throw new Error(`Whisper model not found: ${modelPath || modelName}`);
+  const modelFilePath = getWhisperModelPath(modelName);
+  if (!modelFilePath || !fs.existsSync(modelFilePath)) {
+    throw new Error(`Whisper model not found: ${modelFilePath || modelName}`);
   }
 
   const device = String(options.device || config.whisperDevice || 'cpu').toLowerCase();
   const whisperOptions = {
-    modelName,
-    modelPath,
+    modelName: getWhisperCppModelName(modelName),
+    modelPath: WHISPER_MODELS_DIR,
     whisperOptions: {
       gpu: device === 'gpu',
       language: options.language,
