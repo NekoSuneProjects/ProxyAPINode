@@ -10,11 +10,17 @@ const WHISPER_DIR = 'whisper';
 const WHISPER_MODELS_DIR = path.join(WHISPER_DIR, 'models');
 const WHISPER_MODEL_FILES = {
   tiny: 'ggml-tiny.bin',
+  'tiny.en': 'ggml-tiny.en.bin',
   base: 'ggml-base.bin',
+  'base.en': 'ggml-base.en.bin',
   small: 'ggml-small.bin',
+  'small.en': 'ggml-small.en.bin',
   medium: 'ggml-medium.bin',
-  large: 'ggml-large-v1.bin',
-  largev2: 'ggml-large-v2.bin',
+  'medium.en': 'ggml-medium.en.bin',
+  large: 'ggml-large.bin',
+  'large-v1': 'ggml-large-v1.bin',
+  'large-v2': 'ggml-large-v2.bin',
+  'large-v3-turbo': 'ggml-large-v3-turbo.bin',
 };
 
 let model = null;
@@ -82,7 +88,7 @@ function normalizeWhisperModel(modelName) {
   if (!modelName) return 'base';
   const normalized = String(modelName).toLowerCase().trim();
   if (normalized === 'mid') return 'medium';
-  if (normalized === 'large-v2' || normalized === 'large_v2') return 'largev2';
+  if (normalized === 'large_v2' || normalized === 'largev2') return 'large-v2';
   return normalized;
 }
 
@@ -91,12 +97,6 @@ function getWhisperModelPath(modelName) {
   const fileName = WHISPER_MODEL_FILES[normalized];
   if (!fileName) return null;
   return path.join(WHISPER_MODELS_DIR, fileName);
-}
-
-function getWhisperCppModelName(modelName) {
-  const normalized = normalizeWhisperModel(modelName);
-  if (normalized === 'largev2') return 'large-v2';
-  return normalized;
 }
 
 function loadWhisperModule() {
@@ -144,16 +144,15 @@ async function transcribeWithWhisper(filePath, options = {}) {
 
   const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
   const modelFilePath = getWhisperModelPath(modelName);
-  if (!modelFilePath || !fs.existsSync(modelFilePath)) {
-    throw new Error(`Whisper model not found: ${modelFilePath || modelName}`);
-  }
+  const hasModelFile = modelFilePath && fs.existsSync(modelFilePath);
 
   const device = String(options.device || config.whisperDevice || 'cpu').toLowerCase();
   const whisperOptions = {
-    modelName: getWhisperCppModelName(modelName),
+    modelName,
     modelPath: WHISPER_MODELS_DIR,
+    autoDownloadModelName: hasModelFile ? undefined : modelName,
+    withCuda: device === 'gpu',
     whisperOptions: {
-      gpu: device === 'gpu',
       language: options.language,
     },
   };
