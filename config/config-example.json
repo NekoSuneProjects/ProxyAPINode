@@ -5,6 +5,7 @@
   "sttEngine": "vosk",
   "whisperModel": "base",
   "whisperDevice": "cpu",
+  "whisperPrimaryUrl": "http://localhost:8080/v1/audio/transcriptions",
   "whisperApiUrl": "http://localhost:7860/",
   "whisperApiName": "/transcribe_file"
 }
