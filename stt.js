@@ -7,7 +7,7 @@ const { config } = require("./config");
 const MODEL_PATH = `./model/${config.vaskmodel}`
 
 let model = null;
-let gradioModulePromise = null;
+const GRADIO_FILE_META = { _type: 'gradio.FileData' };
 
 async function voskLoader() {
   // Only load model if not already loaded
@@ -84,6 +84,9 @@ function extractWhisperText(result) {
   if (result.data && Array.isArray(result.data)) {
     return String(result.data[0] ?? '').trim();
   }
+  if (result.data && result.data.data && Array.isArray(result.data.data)) {
+    return String(result.data.data[0] ?? '').trim();
+  }
   if (typeof result === 'string') {
     if (fs.existsSync(result)) {
       return fs.readFileSync(result, 'utf8').trim();
@@ -99,62 +102,77 @@ function extractWhisperText(result) {
   return '';
 }
 
-let gradioClientPromise = null;
-
-async function loadGradioModule() {
-  if (!gradioModulePromise) {
-    gradioModulePromise = import('@gradio/client');
-  }
-  return gradioModulePromise;
+function normalizeBaseUrl(url) {
+  return String(url).replace(/\/+$/, '');
 }
 
-async function getGradioClient() {
-  if (gradioClientPromise) return gradioClientPromise;
-  const apiUrl = config.whisperApiUrl;
-  if (!apiUrl) {
-    throw new Error('Missing whisperApiUrl in config.');
-  }
-  const gradio = await loadGradioModule();
-  const GradioClient = gradio.Client || gradio.client || gradio.default;
-  if (GradioClient && typeof GradioClient.connect === 'function') {
-    gradioClientPromise = GradioClient.connect(apiUrl);
-  } else if (typeof GradioClient === 'function') {
-    gradioClientPromise = GradioClient(apiUrl);
-  } else {
-    throw new Error('Unsupported @gradio/client API.');
-  }
-  return gradioClientPromise;
+function getMimeType(fileName) {
+  const ext = path.extname(fileName).toLowerCase();
+  if (ext === '.wav') return 'audio/wav';
+  if (ext === '.mp3') return 'audio/mpeg';
+  if (ext === '.ogg') return 'audio/ogg';
+  if (ext === '.flac') return 'audio/flac';
+  if (ext === '.m4a') return 'audio/mp4';
+  if (ext === '.aac') return 'audio/aac';
+  return 'application/octet-stream';
 }
 
-async function buildGradioFiles(filePath) {
-  const gradio = await loadGradioModule();
-  const handleFile =
-    gradio.handle_file ||
-    gradio.handleFile ||
-    (gradio.default && (gradio.default.handle_file || gradio.default.handleFile));
+async function uploadToGradio(apiUrl, filePath) {
   const resolvedPath = path.resolve(filePath);
-  if (typeof handleFile === 'function') {
-    const filePayload = await handleFile(resolvedPath);
-    if (filePayload && typeof filePayload === 'object') {
-      const baseName = path.basename(resolvedPath);
-      const ext = path.extname(baseName).toLowerCase();
-      const name = ext ? baseName : `${baseName}.wav`;
-      filePayload.name = filePayload.name || name;
-      filePayload.orig_name = filePayload.orig_name || name;
-      filePayload.filename = filePayload.filename || name;
-      filePayload.mime_type = filePayload.mime_type || 'audio/wav';
-      filePayload.mimeType = filePayload.mimeType || 'audio/wav';
-    }
-    return filePayload;
+  const data = await fs.promises.readFile(resolvedPath);
+  const baseName = path.basename(resolvedPath);
+  const ext = path.extname(baseName).toLowerCase();
+  const name = ext ? baseName : `${baseName}.wav`;
+  const mimeType = getMimeType(name);
+
+  const form = new FormData();
+  form.append('files', new Blob([data], { type: mimeType }), name);
+
+  const uploadUrl = `${normalizeBaseUrl(apiUrl)}/gradio_api/upload`;
+  const response = await fetch(uploadUrl, { method: 'POST', body: form });
+  if (!response.ok) {
+    throw new Error(`Gradio upload failed: ${response.status} ${response.statusText}`);
   }
-  if (typeof File !== 'undefined') {
-    const data = await fs.promises.readFile(resolvedPath);
-    const baseName = path.basename(resolvedPath);
-    const ext = path.extname(baseName).toLowerCase();
-    const name = ext ? baseName : `${baseName}.wav`;
-    return new File([data], name, { type: 'audio/wav' });
+  const result = await response.json();
+  if (!Array.isArray(result) || !result[0]) {
+    throw new Error('Gradio upload returned no file path.');
   }
-  throw new Error('Cannot build Gradio file payload. handle_file and File are unavailable.');
+  return result[0];
+}
+
+async function callGradio(apiUrl, apiName, dataArray) {
+  const callUrl = `${normalizeBaseUrl(apiUrl)}/gradio_api/call${apiName}`;
+  const response = await fetch(callUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: dataArray }),
+  });
+  if (!response.ok) {
+    throw new Error(`Gradio call failed: ${response.status} ${response.statusText}`);
+  }
+  const result = await response.json();
+  const eventId = result.event_id || result.eventId || result.id;
+  if (!eventId) {
+    throw new Error('Gradio call returned no event id.');
+  }
+
+  const eventUrl = `${normalizeBaseUrl(apiUrl)}/gradio_api/call${apiName}/${eventId}`;
+  const eventResponse = await fetch(eventUrl);
+  if (!eventResponse.ok) {
+    throw new Error(`Gradio event failed: ${eventResponse.status} ${eventResponse.statusText}`);
+  }
+  const text = await eventResponse.text();
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const dataLines = lines.filter((line) => line.startsWith('data:'));
+  if (!dataLines.length) {
+    throw new Error('Gradio event returned no data.');
+  }
+  const lastData = dataLines[dataLines.length - 1].slice('data:'.length).trim();
+  try {
+    return JSON.parse(lastData);
+  } catch {
+    return lastData;
+  }
 }
 
 function normalizeGradioDevice(device) {
@@ -164,76 +182,74 @@ function normalizeGradioDevice(device) {
 }
 
 async function transcribeWithWhisper(filePath, options = {}) {
-  const client = await getGradioClient();
+  const apiUrl = config.whisperApiUrl;
+  if (!apiUrl) {
+    throw new Error('Missing whisperApiUrl in config.');
+  }
   const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
   const device = normalizeGradioDevice(options.device || config.whisperDevice || 'cpu');
   const apiName = options.apiName || config.whisperApiName || '/transcribe_file';
-  const filePayload = await buildGradioFiles(path.resolve(filePath));
+  const uploadPath = await uploadToGradio(apiUrl, filePath);
 
-  const basePayload = {
-    input_folder_path: '',
-    include_subdirectory: false,
-    save_same_dir: true,
-    file_format: options.fileFormat || 'SRT',
-    add_timestamp: false,
-    progress: modelName,
-    param_7: options.language || 'Automatic Detection',
-    param_8: false,
-    param_9: 5,
-    param_10: -1,
-    param_11: 0.6,
-    param_12: options.computeType || 'float16',
-    param_13: 5,
-    param_14: 1,
-    param_15: true,
-    param_16: 0.5,
-    param_17: options.initialPrompt || '',
-    param_18: 0,
-    param_19: 2.4,
-    param_20: 1,
-    param_21: 1,
-    param_22: 0,
-    param_23: options.prefix || '',
-    param_24: true,
-    param_25: '[-1]',
-    param_26: 1,
-    param_27: false,
-    param_28: `"'“¿([{-`,
-    param_29: `"'.。,，!！?？:：”)]}、`,
-    param_30: options.maxNewTokens ?? 3,
-    param_31: 30,
-    param_32: options.hallucinationSilenceThreshold ?? 3,
-    param_33: options.hotwords || '',
-    param_34: 0.5,
-    param_35: 1,
-    param_36: 24,
-    param_37: true,
-    param_38: false,
-    param_39: 0.5,
-    param_40: 250,
-    param_41: 9999,
-    param_42: 1000,
-    param_43: 2000,
-    param_44: false,
-    param_45: device,
-    param_46: '',
-    param_47: true,
-    param_48: false,
-    param_49: 'UVR-MDX-NET-Inst_HQ_4',
-    param_50: device,
-    param_51: 256,
-    param_52: false,
-    param_53: true,
-  };
+  const data = [
+    [{ path: uploadPath, meta: GRADIO_FILE_META }],
+    '',
+    false,
+    true,
+    options.fileFormat || 'SRT',
+    false,
+    modelName,
+    options.language || 'Automatic Detection',
+    false,
+    5,
+    -1,
+    0.6,
+    options.computeType || 'float16',
+    5,
+    1,
+    true,
+    0.5,
+    options.initialPrompt || '',
+    0,
+    2.4,
+    1,
+    1,
+    0,
+    options.prefix || '',
+    true,
+    '[-1]',
+    1,
+    false,
+    `"'([{-`,
+    `"'.!?:)]}`,
+    options.maxNewTokens ?? 3,
+    30,
+    options.hallucinationSilenceThreshold ?? 3,
+    options.hotwords || '',
+    0.5,
+    1,
+    24,
+    true,
+    false,
+    0.5,
+    250,
+    9999,
+    1000,
+    2000,
+    false,
+    device,
+    '',
+    true,
+    false,
+    'UVR-MDX-NET-Inst_HQ_4',
+    device,
+    256,
+    false,
+    true,
+  ];
 
-  try {
-    const result = await client.predict(apiName, { ...basePayload, files: filePayload });
-    return extractWhisperText(result);
-  } catch (err) {
-    const fallbackFiles = Array.isArray(filePayload) ? filePayload : [filePayload];
-    const result = await client.predict(apiName, { ...basePayload, files: fallbackFiles });
-    return extractWhisperText(result);
-  }
+  const result = await callGradio(apiUrl, apiName, data);
+  return extractWhisperText(result);
 }
 
 module.exports = {
