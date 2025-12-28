@@ -101,6 +101,16 @@ function loadWhisperModule() {
   }
 }
 
+function resolveWhisperFunction(whisperModule) {
+  if (!whisperModule) return null;
+  if (typeof whisperModule === 'function') return whisperModule;
+  if (typeof whisperModule.nodewhisper === 'function') return whisperModule.nodewhisper;
+  if (typeof whisperModule.whisper === 'function') return whisperModule.whisper;
+  if (typeof whisperModule.transcribe === 'function') return whisperModule.transcribe;
+  if (typeof whisperModule.default === 'function') return whisperModule.default;
+  return null;
+}
+
 function extractWhisperText(result) {
   if (!result) return '';
   if (typeof result === 'string') {
@@ -120,9 +130,10 @@ function extractWhisperText(result) {
 
 async function transcribeWithWhisper(filePath, options = {}) {
   const whisperModule = loadWhisperModule();
-  const whisperFn = whisperModule.whisper || whisperModule.transcribe || whisperModule.default || whisperModule;
+  const whisperFn = resolveWhisperFunction(whisperModule);
   if (typeof whisperFn !== 'function') {
-    throw new Error('Unsupported whisper module API.');
+    const exportKeys = Object.keys(whisperModule || {}).join(', ') || 'none';
+    throw new Error(`Unsupported whisper module API. Exports: ${exportKeys}`);
   }
 
   const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
