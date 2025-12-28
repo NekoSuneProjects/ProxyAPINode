@@ -2,4 +2,7 @@
   "port": 3000,
   "voice": "en_US-lessac-medium",
   "vaskmodel": "vosk-model-en-us-0.22",
+  "sttEngine": "vosk",
+  "whisperModel": "base",
+  "whisperDevice": "cpu",
 }

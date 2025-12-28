@@ -16,7 +16,14 @@ const chalk = require('chalk');
 const bodyParser = require('body-parser');
 const logger = console;
 
-const { transcribeWithVosk, voskLoader } = require('./stt');
+const {
+    transcribeWithVosk,
+    transcribeWithWhisper,
+    voskLoader,
+    WHISPER_MODELS_DIR,
+    WHISPER_MODEL_FILES,
+    normalizeWhisperModel,
+} = require('./stt');
 const { synthesizeWithPiper, loadTtsConfigs } = require('./tts');
 
 const app = express();
@@ -53,6 +60,7 @@ const MODELS_DIR = path.join(PIPER_DIR, 'models');
 const MODEL_URL = `https://alphacephei.com/vosk/models/${config.vaskmodel}.zip`;
 const ZIP_PATH = `./model/${config.vaskmodel}.zip`;
 const EXTRACT_PATH = './model/';
+const WHISPER_MODEL_URL_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
 
 // Voice model download URLs (from Hugging Face)
 const VOICE_MODELS = require('./config/voice_dl.json');
@@ -197,6 +205,21 @@ async function ensureVoskModelDownloaded() {
     }
 }
 
+async function ensureWhisperModelsDownloaded() {
+    try {
+        await fs.mkdir(WHISPER_MODELS_DIR, { recursive: true });
+
+        for (const [modelName, fileName] of Object.entries(WHISPER_MODEL_FILES)) {
+            const modelPath = path.join(WHISPER_MODELS_DIR, fileName);
+            if (await fileExists(modelPath)) continue;
+            logger.info(`Downloading Whisper model ${modelName}...`);
+            await downloadFile(`${WHISPER_MODEL_URL_BASE}${fileName}`, modelPath);
+        }
+    } catch (err) {
+        console.error('Failed to set up Whisper models:', err.message);
+    }
+}
+
 
 async function setupPiper() {
     try {
@@ -306,6 +329,7 @@ async function setupPiper() {
 
         logger.info('Piper Python setup complete.');
         await ensureVoskModelDownloaded();
+        await ensureWhisperModelsDownloaded();
     } catch (error) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
@@ -317,9 +341,52 @@ async function setupPiper() {
 app.post('/stt', upload.single('audio'), async (req, res) => {
     const filePath = req.file.path;
     try {
-        const text = await transcribeWithVosk(filePath);
+        const engineRaw = req.body.engine || config.sttEngine || 'vosk';
+        const engine = String(engineRaw).toLowerCase();
+        const device = String(req.body.device || config.whisperDevice || 'cpu').toLowerCase();
+        const modelRaw = req.body.model || config.whisperModel || 'base';
+
+        let text = '';
+        let responseModel = null;
+        if (engine === 'whisper') {
+            const modelName = normalizeWhisperModel(modelRaw);
+            text = await transcribeWithWhisper(filePath, { model: modelName, device });
+            responseModel = modelName;
+        } else if (engine === 'vosk') {
+            text = await transcribeWithVosk(filePath);
+            responseModel = config.vaskmodel || null;
+        } else if (engine === 'both') {
+            const modelName = normalizeWhisperModel(modelRaw);
+            const [whisperText, voskText] = await Promise.all([
+                transcribeWithWhisper(filePath, { model: modelName, device }),
+                transcribeWithVosk(filePath),
+            ]);
+            await fsnormal.remove(filePath);
+            res.json({
+                transcript: whisperText || voskText || '',
+                transcripts: {
+                    whisper: whisperText,
+                    vosk: voskText,
+                },
+                engine,
+                device,
+                models: {
+                    whisper: modelName,
+                    vosk: config.vaskmodel || null,
+                },
+            });
+            return;
+        } else {
+            res.status(400).json({ error: `Unknown STT engine: ${engine}` });
+            return;
+        }
         await fsnormal.remove(filePath);
-        res.json({ transcript: text });
+        res.json({
+            transcript: text,
+            engine,
+            device: engine === 'whisper' ? device : 'cpu',
+            model: responseModel,
+        });
     } catch (err) {
         console.error(err);
         res.status(500).send('STT error');

@@ -1,9 +1,20 @@
 const fs = require('fs');
+const path = require('path');
 const vosk = require("vosk");
 const { Readable } = require('stream');
 const { config } = require("./config");
 
 const MODEL_PATH = `./model/${config.vaskmodel}`
+
+const WHISPER_DIR = 'whisper';
+const WHISPER_MODELS_DIR = path.join(WHISPER_DIR, 'models');
+const WHISPER_MODEL_FILES = {
+  base: 'ggml-base.bin',
+  small: 'ggml-small.bin',
+  medium: 'ggml-medium.bin',
+  large: 'ggml-large.bin',
+  largev2: 'ggml-large-v2.bin',
+};
 
 let model = null;
 
@@ -66,4 +77,79 @@ async function transcribeWithVosk(filePath) {
   });
 }
 
-module.exports = { transcribeWithVosk, voskLoader };
+function normalizeWhisperModel(modelName) {
+  if (!modelName) return 'base';
+  const normalized = String(modelName).toLowerCase().trim();
+  if (normalized === 'mid') return 'medium';
+  if (normalized === 'large-v2' || normalized === 'large_v2') return 'largev2';
+  return normalized;
+}
+
+function getWhisperModelPath(modelName) {
+  const normalized = normalizeWhisperModel(modelName);
+  const fileName = WHISPER_MODEL_FILES[normalized];
+  if (!fileName) return null;
+  return path.join(WHISPER_MODELS_DIR, fileName);
+}
+
+function loadWhisperModule() {
+  try {
+    return require('nodejs-whisper');
+  } catch (err) {
+    throw new Error('Whisper module not installed. Add nodejs-whisper to dependencies.');
+  }
+}
+
+function extractWhisperText(result) {
+  if (!result) return '';
+  if (typeof result === 'string') {
+    if (fs.existsSync(result)) {
+      return fs.readFileSync(result, 'utf8').trim();
+    }
+    return result.trim();
+  }
+  if (typeof result.text === 'string') return result.text.trim();
+  if (typeof result.transcription === 'string') return result.transcription.trim();
+  if (result.data && typeof result.data.text === 'string') return result.data.text.trim();
+  if (typeof result.outputPath === 'string' && fs.existsSync(result.outputPath)) {
+    return fs.readFileSync(result.outputPath, 'utf8').trim();
+  }
+  return '';
+}
+
+async function transcribeWithWhisper(filePath, options = {}) {
+  const whisperModule = loadWhisperModule();
+  const whisperFn = whisperModule.whisper || whisperModule.transcribe || whisperModule.default || whisperModule;
+  if (typeof whisperFn !== 'function') {
+    throw new Error('Unsupported whisper module API.');
+  }
+
+  const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
+  const modelPath = getWhisperModelPath(modelName);
+  if (!modelPath || !fs.existsSync(modelPath)) {
+    throw new Error(`Whisper model not found: ${modelPath || modelName}`);
+  }
+
+  const device = String(options.device || config.whisperDevice || 'cpu').toLowerCase();
+  const whisperOptions = {
+    modelName,
+    modelPath,
+    whisperOptions: {
+      gpu: device === 'gpu',
+      language: options.language,
+    },
+  };
+
+  const result = await whisperFn(filePath, whisperOptions);
+  return extractWhisperText(result);
+}
+
+module.exports = {
+  transcribeWithVosk,
+  transcribeWithWhisper,
+  voskLoader,
+  WHISPER_MODELS_DIR,
+  WHISPER_MODEL_FILES,
+  normalizeWhisperModel,
+  getWhisperModelPath,
+};
