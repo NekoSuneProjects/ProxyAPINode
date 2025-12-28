@@ -124,6 +124,19 @@ function stripSrt(text) {
   return output.join(' ').trim();
 }
 
+async function extractWhisperTextFromResult(result) {
+  if (Array.isArray(result) && Array.isArray(result[1]) && result[1][0] && result[1][0].url) {
+    const response = await fetch(result[1][0].url);
+    if (!response.ok) {
+      throw new Error(`Whisper output fetch failed: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    return stripSrt(text);
+  }
+  const rawText = extractWhisperText(result);
+  return stripSrt(rawText);
+}
+
 function normalizeBaseUrl(url) {
   return String(url).replace(/\/+$/, '');
 }
@@ -271,9 +284,7 @@ async function transcribeWithWhisper(filePath, options = {}) {
   ];
 
   const result = await callGradio(apiUrl, apiName, data);
-  console.log(result)
-  const rawText = extractWhisperText(result);
-  return stripSrt(rawText);
+  return await extractWhisperTextFromResult(result);
 }
 
 module.exports = {
