@@ -4,5 +4,5 @@
   "vaskmodel": "vosk-model-en-us-0.22",
   "sttEngine": "vosk",
   "whisperModel": "base",
-  "whisperDevice": "cpu",
+  "whisperDevice": "cpu"
 }
