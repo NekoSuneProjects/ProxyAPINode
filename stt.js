@@ -168,10 +168,9 @@ async function transcribeWithWhisper(filePath, options = {}) {
   const modelName = normalizeWhisperModel(options.model || config.whisperModel || 'base');
   const device = normalizeGradioDevice(options.device || config.whisperDevice || 'cpu');
   const apiName = options.apiName || config.whisperApiName || '/transcribe_file';
-  const files = await buildGradioFiles(path.resolve(filePath));
+  const filePayload = await buildGradioFiles(path.resolve(filePath));
 
-  const payload = {
-    files,
+  const basePayload = {
     input_folder_path: '',
     include_subdirectory: false,
     save_same_dir: true,
@@ -227,8 +226,14 @@ async function transcribeWithWhisper(filePath, options = {}) {
     param_53: true,
   };
 
-  const result = await client.predict(apiName, payload);
-  return extractWhisperText(result);
+  try {
+    const result = await client.predict(apiName, { ...basePayload, files: filePayload });
+    return extractWhisperText(result);
+  } catch (err) {
+    const fallbackFiles = Array.isArray(filePayload) ? filePayload : [filePayload];
+    const result = await client.predict(apiName, { ...basePayload, files: fallbackFiles });
+    return extractWhisperText(result);
+  }
 }
 
 module.exports = {
