@@ -151,6 +151,19 @@ async function fileExists(filePath) {
     }
 }
 
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForFile(filePath, timeoutMs = 15000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        if (await fileExists(filePath)) return true;
+        await delay(100);
+    }
+    return false;
+}
+
 async function runCommand(cmd, args, options = {}) {
     return new Promise((resolve, reject) => {
         const child = require('child_process').spawn(cmd, args, options);
@@ -319,8 +332,17 @@ async function setupPiper() {
 }
 
 app.post('/stt', upload.single('audio'), async (req, res) => {
+    if (!req.file || !req.file.path) {
+        res.status(400).json({ error: 'Missing audio file upload' });
+        return;
+    }
     const filePath = req.file.path;
     try {
+        const ready = await waitForFile(filePath);
+        if (!ready) {
+            res.status(400).json({ error: 'Upload not completed or file missing' });
+            return;
+        }
         const engineRaw = req.body.engine || config.sttEngine || 'vosk';
         const engine = String(engineRaw).toLowerCase();
         const device = String(req.body.device || config.whisperDevice || 'cpu').toLowerCase();
