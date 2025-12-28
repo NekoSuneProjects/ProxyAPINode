@@ -271,6 +271,7 @@ async function transcribeWithWhisper(filePath, options = {}) {
   ];
 
   const result = await callGradio(apiUrl, apiName, data);
+  console.log(result)
   const rawText = extractWhisperText(result);
   return stripSrt(rawText);
 }
