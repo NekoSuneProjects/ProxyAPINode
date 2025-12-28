@@ -134,7 +134,17 @@ async function buildGradioFiles(filePath) {
     (gradio.default && (gradio.default.handle_file || gradio.default.handleFile));
   const resolvedPath = path.resolve(filePath);
   if (typeof handleFile === 'function') {
-    return [await handleFile(resolvedPath)];
+    const filePayload = await handleFile(resolvedPath);
+    if (filePayload && typeof filePayload === 'object') {
+      const baseName = path.basename(resolvedPath);
+      const ext = path.extname(baseName).toLowerCase();
+      const name = ext ? baseName : `${baseName}.wav`;
+      filePayload.name = filePayload.name || name;
+      filePayload.filename = filePayload.filename || name;
+      filePayload.mime_type = filePayload.mime_type || 'audio/wav';
+      filePayload.mimeType = filePayload.mimeType || 'audio/wav';
+    }
+    return [filePayload];
   }
   if (typeof File !== 'undefined') {
     const data = await fs.promises.readFile(resolvedPath);
