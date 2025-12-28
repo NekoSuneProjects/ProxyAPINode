@@ -20,8 +20,6 @@ const {
     transcribeWithVosk,
     transcribeWithWhisper,
     voskLoader,
-    WHISPER_MODELS_DIR,
-    WHISPER_MODEL_FILES,
     normalizeWhisperModel,
 } = require('./stt');
 const { synthesizeWithPiper, loadTtsConfigs } = require('./tts');
@@ -60,17 +58,6 @@ const MODELS_DIR = path.join(PIPER_DIR, 'models');
 const MODEL_URL = `https://alphacephei.com/vosk/models/${config.vaskmodel}.zip`;
 const ZIP_PATH = `./model/${config.vaskmodel}.zip`;
 const EXTRACT_PATH = './model/';
-const WHISPER_MODEL_URL_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
-const WHISPER_DOWNLOAD_MODELS = [
-    'base',
-    'base.en',
-    'small',
-    'small.en',
-    'medium',
-    'medium.en',
-    'large',
-    'large-v2',
-];
 
 // Voice model download URLs (from Hugging Face)
 const VOICE_MODELS = require('./config/voice_dl.json');
@@ -215,24 +202,6 @@ async function ensureVoskModelDownloaded() {
     }
 }
 
-async function ensureWhisperModelsDownloaded() {
-    try {
-        await fs.mkdir(WHISPER_MODELS_DIR, { recursive: true });
-
-        for (const modelName of WHISPER_DOWNLOAD_MODELS) {
-            const fileName = WHISPER_MODEL_FILES[modelName];
-            if (!fileName) continue;
-            const modelPath = path.join(WHISPER_MODELS_DIR, fileName);
-            if (await fileExists(modelPath)) continue;
-            logger.info(`Downloading Whisper model ${modelName}...`);
-            await downloadFile(`${WHISPER_MODEL_URL_BASE}${fileName}`, modelPath);
-        }
-    } catch (err) {
-        console.error('Failed to set up Whisper models:', err.message);
-    }
-}
-
-
 async function setupPiper() {
     try {
         const platform = os.platform();
@@ -341,7 +310,6 @@ async function setupPiper() {
 
         logger.info('Piper Python setup complete.');
         await ensureVoskModelDownloaded();
-        await ensureWhisperModelsDownloaded();
     } catch (error) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);

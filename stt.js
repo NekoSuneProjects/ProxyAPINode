@@ -150,14 +150,25 @@ async function transcribeWithWhisper(filePath, options = {}) {
   const whisperOptions = {
     modelName,
     autoDownloadModelName: hasModelFile ? undefined : modelName,
+    removeWavFileAfterTranscription: false,
     withCuda: device === 'gpu',
+    logger: console,
     whisperOptions: {
+      outputInCsv: false,
+      outputInJson: false,
+      outputInJsonFull: false,
+      outputInLrc: false,
+      outputInSrt: true,
+      outputInText: false,
+      outputInVtt: false,
+      outputInWords: false,
+      translateToEnglish: false,
+      wordTimestamps: false,
+      timestamps_length: 20,
+      splitOnWord: true,
       language: options.language,
     },
   };
-  if (hasModelFile) {
-    whisperOptions.modelPath = WHISPER_MODELS_DIR;
-  }
 
   const result = await whisperFn(filePath, whisperOptions);
   return extractWhisperText(result);
