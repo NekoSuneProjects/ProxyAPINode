@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const vosk = require("vosk");
 const { Readable } = require('stream');
+const { Blob } = require('buffer');
 const { config } = require("./config");
 
 const MODEL_PATH = `./model/${config.vaskmodel}`
@@ -312,22 +313,57 @@ async function transcribeWithWhisper(filePath, options = {}) {
   return await extractWhisperTextFromResult(result);
 }
 
+async function transcribeWithGradioClient(filePath, options = {}) {
+  const space = options.gradioSpace || config.whisperGradioSpace || 'openai/whisper';
+  const apiName = options.gradioApiName || config.whisperGradioApiName || '/predict';
+  const task = options.task || 'transcribe';
+  const resolvedPath = path.resolve(filePath);
+  const buffer = await fs.promises.readFile(resolvedPath);
+  const audioBlob = new Blob([buffer]);
+
+  const { Client } = await import('@gradio/client');
+  const client = await Client.connect(space);
+  const result = await client.predict(apiName, {
+    inputs: audioBlob,
+    task,
+  });
+
+  const rawText = extractWhisperText(result);
+  const text = stripSrt(rawText);
+  if (!text) {
+    throw new Error('Gradio client returned no text.');
+  }
+  return text;
+}
+
 async function transcribeWithWhisperWithFallback(filePath, options = {}) {
+  let lastErr = null;
   try {
     return await transcribeWithWhisperPrimary(filePath, options);
   } catch (err) {
-    try {
-      return await transcribeWithWhisper(filePath, options);
-    } catch (innerErr) {
-      return await transcribeWithVosk(filePath);
-    }
+    lastErr = err;
   }
+
+  try {
+    return await transcribeWithGradioClient(filePath, options);
+  } catch (err) {
+    lastErr = err;
+  }
+
+  try {
+    return await transcribeWithVosk(filePath);
+  } catch (err) {
+    lastErr = err;
+  }
+
+  throw lastErr || new Error('Transcription failed with all providers.');
 }
 
 module.exports = {
   transcribeWithVosk,
   transcribeWithWhisper,
   transcribeWithWhisperWithFallback,
+  transcribeWithGradioClient,
   voskLoader,
   normalizeWhisperModel,
 };
