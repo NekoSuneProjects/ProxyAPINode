@@ -90,29 +90,49 @@ async function extractZip(zipPath, extractTo) {
     console.log('Extraction complete.');
 }
 
-// Helper function to render a progress bar
-function renderProgress(filename, received, total) {
+function createProgressRenderer(filename) {
     const barWidth = 30;
-    const percent = total ? received / total : 0;
-    const filledBar = Math.floor(barWidth * percent);
-    const emptyBar = barWidth - filledBar;
-    const bar = '█'.repeat(filledBar) + '░'.repeat(emptyBar);
-    const percentage = (percent * 100).toFixed(1);
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
-    process.stdout.write(`Downloading ${filename} [${bar}] ${percentage}% (${received}/${total} bytes)`);
+    let lastRenderMs = 0;
+    let lastPercent = -1;
+
+    return (received, total) => {
+        if (!process.stdout.isTTY || !total) return;
+        const now = Date.now();
+        const percent = received / total;
+        const percentage = Math.round(percent * 1000) / 10;
+
+        if (now - lastRenderMs < 100 && percentage !== 100 && percentage === lastPercent) return;
+
+        lastRenderMs = now;
+        lastPercent = percentage;
+
+        const filledBar = Math.floor(barWidth * percent);
+        const emptyBar = barWidth - filledBar;
+        const bar = '#'.repeat(filledBar) + '-'.repeat(emptyBar);
+
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        process.stdout.write(`Downloading ${filename} [${bar}] ${percentage.toFixed(1)}% (${received}/${total} bytes)`);
+    };
 }
 
 // Download file from URL to destination with progress bar
-async function downloadFile(url, dest) {
+async function downloadFile(url, dest, options = {}) {
     await fs.mkdir(path.dirname(dest), { recursive: true });
     const file = await fs.open(dest, 'w');
     const stream = file.createWriteStream();
     const filename = path.basename(dest);
+    const renderProgress = createProgressRenderer(filename);
+    const allow404 = options.allow404 === true;
 
     return new Promise((resolve, reject) => {
         https.get(url, { headers: { 'User-Agent': 'Node.js' } }, (response) => {
             if (response.statusCode === 404) {
+                if (allow404) {
+                    console.log(`Skipped missing file (404): ${filename}`);
+                    resolve({ skipped: true, url, dest });
+                    return;
+                }
                 reject(new Error(`Download skipped due to 404: ${url}`));
                 return;
             }
@@ -126,22 +146,24 @@ async function downloadFile(url, dest) {
 
             response.on('data', (chunk) => {
                 receivedBytes += chunk.length;
-                if (totalBytes) {
-                    renderProgress(filename, receivedBytes, totalBytes);
-                }
+                renderProgress(receivedBytes, totalBytes);
             });
 
             response.on('end', () => {
-                process.stdout.write('\n'); // move to next line after done
+                if (process.stdout.isTTY) {
+                    process.stdout.write('\n');
+                } else {
+                    const totalLabel = totalBytes ? `${totalBytes}` : `${receivedBytes}`;
+                    console.log(`Downloaded ${filename} (${totalLabel} bytes)`);
+                }
             });
 
             pipelineAsync(response, stream)
-                .then(resolve)
+                .then(() => resolve({ skipped: false, url, dest }))
                 .catch((error) => reject(new Error(`Download error for ${url}: ${error.message}`)));
         }).on('error', (error) => reject(new Error(`Download error for ${url}: ${error.message}`)));
     });
 }
-
 
 async function fileExists(filePath) {
     try {
@@ -295,12 +317,10 @@ async function setupPiper() {
             const jsonPath = path.join(MODELS_DIR, `${model.name}.onnx.json`);
 
             if (!(await fileExists(onnxPath))) {
-                logger.info(`Downloading voice model ${model.name}.onnx...`);
-                await downloadFile(model.onnx, onnxPath);
+                await downloadFile(model.onnx, onnxPath, { allow404: true });
             }
             if (!(await fileExists(jsonPath))) {
-                logger.info(`Downloading voice model metadata ${model.name}.onnx.json...`);
-                await downloadFile(model.json, jsonPath);
+                await downloadFile(model.json, jsonPath, { allow404: true });
             }
         }
 
